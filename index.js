@@ -1,10 +1,6 @@
 const express = require("express");
-const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
-
 const app = express();
 app.use(express.json());
-
-const ses = new SESClient({ region: "eu-north-1" });
 
 app.post("/send-email", async (req, res) => {
   const { to, subject, body } = req.body;
@@ -13,24 +9,29 @@ app.post("/send-email", async (req, res) => {
     return res.status(400).json({ success: false, error: "Missing required fields: to, subject, body" });
   }
 
-  const command = new SendEmailCommand({
-    Source: "no-reply@himyself.se",
-    Destination: {
-      ToAddresses: [to],
-    },
-    Message: {
-      Subject: { Data: subject },
-      Body: {
-        Text: { Data: body },
-      },
-    },
-  });
-
   try {
-    await ses.send(command);
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": process.env.BREVO_API_KEY,
+      },
+      body: JSON.stringify({
+        sender: { name: "Hi Myself", email: "hi@himyself.com" },
+        to: [{ email: to }],
+        subject: subject,
+        textContent: body,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(JSON.stringify(error));
+    }
+
     res.json({ success: true });
   } catch (err) {
-    console.error("SES error:", err);
+    console.error("Brevo error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
