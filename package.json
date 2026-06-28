@@ -1,14 +1,12 @@
 {
   "name": "himyself-backend",
   "version": "1.0.0",
-  "description": "HiMyself backend server for sending emails via Amazon SES",
+  "description": "HiMyself backend server for sending emails via Brevo",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@aws-sdk/client-ses": "^3.0.0",
-    "@getbrevo/brevo": "^5.0.4",
     "express": "^4.18.0"
   }
 }
