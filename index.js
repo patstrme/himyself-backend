@@ -1,4 +1,4 @@
-const express = require("express");
+ const express = require("express");
 const rateLimit = require("express-rate-limit");
 const app = express();
 app.use(express.json());
@@ -13,6 +13,14 @@ const ipLimiter = rateLimit({
   message: { success: false, error: "Too many requests, please try again later." }
 });
 app.use(ipLimiter);
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function log(action, email, success, detail = "") {
+  console.log(JSON.stringify({ timestamp: new Date().toISOString(), action, email, success, detail }));
+}
 
 function checkMonthlyLimit(email) {
   const now = Date.now();
@@ -38,8 +46,17 @@ function checkVerificationLimit(email) {
 
 app.post("/send-email", async (req, res) => {
   const { to, subject, body } = req.body;
-  if (!to || !subject || !body) return res.status(400).json({ success: false, error: "Missing required fields" });
-  if (!checkMonthlyLimit(to)) return res.status(429).json({ success: false, error: "Monthly limit reached" });
+  if (!to || !subject || !body) {
+    return res.status(400).json({ success: false, error: "Missing required fields" });
+  }
+  if (!isValidEmail(to)) {
+    log("send-email", to, false, "Invalid email");
+    return res.status(400).json({ success: false, error: "Invalid email address" });
+  }
+  if (!checkMonthlyLimit(to)) {
+    log("send-email", to, false, "Monthly limit reached");
+    return res.status(429).json({ success: false, error: "Monthly limit reached" });
+  }
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -47,14 +64,28 @@ app.post("/send-email", async (req, res) => {
       body: JSON.stringify({ sender: { name: "Hi Myself", email: "hi@himyself.com" }, to: [{ email: to }], subject, textContent: body }),
     });
     if (!response.ok) { const error = await response.json(); throw new Error(JSON.stringify(error)); }
+    log("send-email", to, true);
     res.json({ success: true });
-  } catch (err) { console.error("Brevo error:", err); res.status(500).json({ success: false, error: err.message }); }
+  } catch (err) {
+    log("send-email", to, false, err.message);
+    console.error("Brevo error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.post("/send-verification", async (req, res) => {
   const { email, firstName } = req.body;
-  if (!email || !firstName) return res.status(400).json({ success: false, error: "Missing required fields" });
-  if (!checkVerificationLimit(email)) return res.status(429).json({ success: false, error: "Too many verification attempts. Try again in an hour." });
+  if (!email || !firstName) {
+    return res.status(400).json({ success: false, error: "Missing required fields" });
+  }
+  if (!isValidEmail(email)) {
+    log("send-verification", email, false, "Invalid email");
+    return res.status(400).json({ success: false, error: "Invalid email address" });
+  }
+  if (!checkVerificationLimit(email)) {
+    log("send-verification", email, false, "Rate limit exceeded");
+    return res.status(429).json({ success: false, error: "Too many verification attempts. Try again in an hour." });
+  }
   const code = String(Math.floor(1000 + Math.random() * 9000));
   verificationCodes.set(email, { code, expiresAt: Date.now() + 10 * 60 * 1000 });
   try {
@@ -64,18 +95,36 @@ app.post("/send-verification", async (req, res) => {
       body: JSON.stringify({ sender: { name: "Hi Myself", email: "hi@himyself.com" }, to: [{ email }], subject: "Your verification code", textContent: `Hi ${firstName},\n\nYour verification code is: ${code}\n\nThe code expires in 10 minutes.` }),
     });
     if (!response.ok) { const error = await response.json(); throw new Error(JSON.stringify(error)); }
+    log("send-verification", email, true);
     res.json({ success: true });
-  } catch (err) { console.error("Brevo error:", err); res.status(500).json({ success: false, error: err.message }); }
+  } catch (err) {
+    log("send-verification", email, false, err.message);
+    console.error("Brevo error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.post("/verify-code", (req, res) => {
   const { email, code } = req.body;
-  if (!email || !code) return res.status(400).json({ success: false, error: "Missing required fields" });
+  if (!email || !code) {
+    return res.status(400).json({ success: false, error: "Missing required fields" });
+  }
   const entry = verificationCodes.get(email);
-  if (!entry) return res.status(400).json({ success: false, error: "No verification code found for this email" });
-  if (Date.now() > entry.expiresAt) { verificationCodes.delete(email); return res.status(400).json({ success: false, error: "Verification code has expired" }); }
-  if (entry.code !== String(code)) return res.status(400).json({ success: false, error: "Invalid verification code" });
+  if (!entry) {
+    log("verify-code", email, false, "No code found");
+    return res.status(400).json({ success: false, error: "No verification code found for this email" });
+  }
+  if (Date.now() > entry.expiresAt) {
+    verificationCodes.delete(email);
+    log("verify-code", email, false, "Code expired");
+    return res.status(400).json({ success: false, error: "Verification code has expired" });
+  }
+  if (entry.code !== String(code)) {
+    log("verify-code", email, false, "Invalid code");
+    return res.status(400).json({ success: false, error: "Invalid verification code" });
+  }
   verificationCodes.delete(email);
+  log("verify-code", email, true);
   res.json({ success: true });
 });
 
